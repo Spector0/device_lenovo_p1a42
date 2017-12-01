@@ -1,6 +1,7 @@
 /*
  * Copyright (C) 2008 The Android Open Source Project
  * Copyright (C) 2014 The  Linux Foundation. All rights reserved.
+ * Copyright (C) 2017 The LineageOS Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,6 +15,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+
+// #define LOG_NDEBUG 0
 
 #include <cutils/log.h>
 
@@ -32,21 +36,23 @@
 
 /******************************************************************************/
 
-#define LED_LIGHT_OFF 0
-#define LED_LIGHT_ON 255
-
 static pthread_once_t g_init = PTHREAD_ONCE_INIT;
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
+static struct light_state_t g_notification;
 static struct light_state_t g_battery;
-
-char const*const CHARGING_LED_FILE
-        = "/sys/class/leds/rgbled/brightness";
+static int g_attention = 0;
 
 char const*const LCD_FILE
         = "/sys/class/leds/lcd-backlight/brightness";
 
 char const*const BUTTON_FILE
         = "/sys/class/leds/button-backlight/brightness";
+
+char const*const RGB_BLINK_FILE
+        = "/sys/class/leds/rgbled/blink";
+
+char const*const RGB_LED_FILE
+        = "/sys/class/leds/rgbled/brightness";
 
 /**
  * device methods
@@ -110,34 +116,99 @@ set_light_backlight(struct light_device_t* dev,
 }
 
 static int
-set_speaker_light_locked(struct light_state_t const* state)
-{
-    int brightness_level;
-
-    if (is_lit(state))
-        brightness_level = LED_LIGHT_ON;
-    else
-        brightness_level = LED_LIGHT_OFF;
-
-    return write_int(CHARGING_LED_FILE, brightness_level);
-}
-
-static int
-handle_speaker_battery_locked()
-{
-    return set_speaker_light_locked(&g_battery);
-}
-
-static int
-set_light_battery(__attribute__((unused)) struct light_device_t* dev,
+set_speaker_light_locked(struct light_device_t* dev,
         struct light_state_t const* state)
 {
-    int err = 0;
+    int rgb;
+    int blink;
+    int onMS, offMS;
+    unsigned int colorRGB;
+    int red, blue;
+
+    if(!dev) {
+        return -1;
+    }
+
+    switch (state->flashMode) {
+        case LIGHT_FLASH_TIMED:
+            onMS = state->flashOnMS;
+            offMS = state->flashOffMS;
+            break;
+        case LIGHT_FLASH_NONE:
+        default:
+            onMS = 0;
+            offMS = 0;
+            break;
+    }
+
+    colorRGB = state->color;
+
+    ALOGD("set_speaker_light_locked mode %d, colorRGB=%08X, onMS=%d, offMS=%d\n",
+            state->flashMode, colorRGB, onMS, offMS);
+
+    rgb = colorRGB & 0xFFFFFF;
+
+    blink = onMS > 0 && offMS > 0;
+
+    // Disable all blinking to start
+    write_int(RGB_BLINK_FILE, 0);
+
+    if (blink) {
+        write_int(RGB_BLINK_FILE, rgb);
+    } else {
+        red = (colorRGB >> 16) & 0xFF;
+        blue = ((colorRGB & 0xFF) << 8) & 0xFF00;
+        write_int(RGB_LED_FILE, (blue+red));
+    }
+
+    return 0;
+}
+
+static void
+handle_speaker_battery_locked(struct light_device_t* dev)
+{
+    if (is_lit(&g_battery)) {
+        set_speaker_light_locked(dev, &g_battery);
+    } else {
+        set_speaker_light_locked(dev, &g_notification);
+    }
+}
+
+static int
+set_light_battery(struct light_device_t* dev,
+        struct light_state_t const* state)
+{
     pthread_mutex_lock(&g_lock);
     g_battery = *state;
-    err = handle_speaker_battery_locked();
+    handle_speaker_battery_locked(dev);
     pthread_mutex_unlock(&g_lock);
-    return err;
+    return 0;
+}
+
+static int
+set_light_notifications(struct light_device_t* dev,
+        struct light_state_t const* state)
+{
+    pthread_mutex_lock(&g_lock);
+    g_notification = *state;
+    handle_speaker_battery_locked(dev);
+    pthread_mutex_unlock(&g_lock);
+    return 0;
+}
+
+static int
+set_light_attention(struct light_device_t* dev,
+        struct light_state_t const* state)
+{
+    pthread_mutex_lock(&g_lock);
+    if (state->flashMode == LIGHT_FLASH_HARDWARE) {
+        g_attention = state->flashOnMS;
+    } else if (state->flashMode == LIGHT_FLASH_NONE) {
+        g_attention = 0;
+    }
+    handle_speaker_battery_locked(dev);
+    pthread_mutex_unlock(&g_lock);
+    return 0;
 }
 
 static int
@@ -182,14 +253,21 @@ static int open_lights(const struct hw_module_t* module, char const* name,
         set_light = set_light_backlight;
     else if (0 == strcmp(LIGHT_ID_BATTERY, name))
         set_light = set_light_battery;
+    else if (0 == strcmp(LIGHT_ID_NOTIFICATIONS, name))
+        set_light = set_light_notifications;
     else if (0 == strcmp(LIGHT_ID_BUTTONS, name))
         set_light = set_light_buttons;
+    else if (0 == strcmp(LIGHT_ID_ATTENTION, name))
+        set_light = set_light_attention;
     else
         return -EINVAL;
 
     pthread_once(&g_init, init_globals);
 
     struct light_device_t *dev = malloc(sizeof(struct light_device_t));
+
+    if(!dev)
+        return -ENOMEM;
 
     memset(dev, 0, sizeof(*dev));
 
@@ -215,7 +293,7 @@ struct hw_module_t HAL_MODULE_INFO_SYM = {
     .version_major = 1,
     .version_minor = 0,
     .id = LIGHTS_HARDWARE_MODULE_ID,
-    .name = "lights Module",
+    .name = "Passion Lights Module",
     .author = "Google, Inc.",
     .methods = &lights_module_methods,
 };
