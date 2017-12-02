@@ -53,8 +53,8 @@ fi
 
 # Initialize the helper
 setup_vendor "$DEVICE" "$VENDOR" "$LINEAGE_ROOT" false $clean_vendor
-+
-+extract "$MY_DIR"/proprietary-files.txt "$SRC" "$SECTION"
+
+extract "$MY_DIR"/proprietary-files.txt "$SRC" "$SECTION"
   
     extract "$MY_DIR"/proprietary-files.txt "$SRC"
     INITIAL_COPYRIGHT_YEAR=2016
