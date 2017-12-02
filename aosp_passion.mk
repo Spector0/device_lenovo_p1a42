@@ -1,4 +1,5 @@
 # Copyright (C) 2016 The CyanogenMod Project
+# Copyright (C) 2017 The LineageOS Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,8 +16,8 @@
 # Inherit device configuration
 $(call inherit-product, device/lenovo/passion/full_passion.mk)
 
-# Inherit some common CM stuff.
-$(call inherit-product, vendor/aosp/common.mk)
+# Inherit some common AOSP stuff.
+$(call inherit-product, vendor/aosp//config/common.mk)
 
 # Boot animation
 TARGET_BOOT_ANIMATION_RES := 1080
